@@ -63,6 +63,17 @@ class TestProjects:
         response = client.get(f'/api/projects/{project.id}')
         assert response.status_code == 403
 
+    def test_list_projects_avoids_n_plus_one_queries(self, auth_client, user, django_assert_num_queries):
+        for i in range(5):
+            p = Project.objects.create(name=f'P{i}', owner=user)
+            Membership.objects.create(user=user, project=p, role='admin')
+            Task.objects.create(project=p, title=f'Task {i}', created_by=user)
+
+        with django_assert_num_queries(2):
+            response = auth_client.get('/api/projects')
+            assert response.status_code == 200
+
+
 
 @pytest.mark.django_db
 class TestTasks:
@@ -159,5 +170,30 @@ class TestTasks:
         assert 'assignee' in task
         assert task['assignee'] is not None
         assert task['assignee']['email'] == user.email
+
+    def test_cannot_create_task_with_non_member_assignee(self, auth_client, user):
+        project = Project.objects.create(name='P', owner=user)
+        Membership.objects.create(user=user, project=project, role='admin')
+        stranger = User.objects.create_user(email='stranger@example.com', name='Stranger', password='password123')
+
+        response = auth_client.post(f'/api/projects/{project.id}/tasks', {
+            'title': 'Task with outsider',
+            'assigneeId': str(stranger.id),
+        }, format='json')
+        assert response.status_code == 400
+        assert 'assignee' in response.data.get('error', '').lower()
+
+    def test_cannot_update_task_with_non_member_assignee(self, auth_client, user):
+        project = Project.objects.create(name='P', owner=user)
+        Membership.objects.create(user=user, project=project, role='admin')
+        task = Task.objects.create(project=project, title='A task', created_by=user)
+        stranger = User.objects.create_user(email='stranger@example.com', name='Stranger', password='password123')
+
+        response = auth_client.patch(f'/api/tasks/{task.id}', {
+            'assigneeId': str(stranger.id),
+        }, format='json')
+        assert response.status_code == 400
+        assert 'assignee' in response.data.get('error', '').lower()
+
 
 

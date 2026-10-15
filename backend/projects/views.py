@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import Q
+from django.db.models import Count, Q
 from users.serializers import UserSerializer
 from .models import Project, Membership, Task
 from .serializers import ProjectDetailSerializer, TaskSerializer
@@ -24,7 +24,7 @@ class ProjectListCreateView(APIView):
             Membership.objects
             .filter(user=request.user)
             .select_related('project__owner')
-            .prefetch_related('project__tasks')
+            .annotate(task_count=Count('project__tasks'))
             .order_by('-project__created_at')
         )
         projects = []
@@ -36,7 +36,7 @@ class ProjectListCreateView(APIView):
                 'description': p.description,
                 'role': m.role,
                 'owner': UserSerializer(p.owner).data,
-                'taskCount': p.tasks.count(),
+                'taskCount': m.task_count,
                 'createdAt': p.created_at.isoformat(),
             })
         return Response({'projects': projects})
@@ -134,6 +134,11 @@ class TaskListCreateView(APIView):
         if task_status not in ('todo', 'in_progress', 'review', 'done'):
             return Response({'error': 'invalid status'}, status=status.HTTP_400_BAD_REQUEST)
 
+        assignee_id = request.data.get('assigneeId') or None
+        if assignee_id:
+            if not Membership.objects.filter(project_id=project_id, user_id=assignee_id).exists():
+                return Response({'error': 'assignee must be a member of the project'}, status=status.HTTP_400_BAD_REQUEST)
+
         last = Task.objects.filter(project_id=project_id, status=task_status).order_by('-position').first()
         position = (last.position + 1) if last else 0
 
@@ -142,7 +147,7 @@ class TaskListCreateView(APIView):
             title=title,
             description=request.data.get('description') or None,
             status=task_status,
-            assignee_id=request.data.get('assigneeId') or None,
+            assignee_id=assignee_id,
             created_by=request.user,
             position=position,
         )
@@ -173,7 +178,11 @@ class TaskDetailView(APIView):
                 return Response({'error': 'invalid status'}, status=status.HTTP_400_BAD_REQUEST)
             task.status = new_status
         if 'assigneeId' in request.data:
-            task.assignee_id = request.data['assigneeId'] or None
+            assignee_id = request.data['assigneeId'] or None
+            if assignee_id:
+                if not Membership.objects.filter(project_id=task.project_id, user_id=assignee_id).exists():
+                    return Response({'error': 'assignee must be a member of the project'}, status=status.HTTP_400_BAD_REQUEST)
+            task.assignee_id = assignee_id
         task.save()
 
         task_data = TaskSerializer(Task.objects.select_related('assignee').get(id=task_id)).data
