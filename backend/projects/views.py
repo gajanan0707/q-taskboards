@@ -168,6 +168,12 @@ class TaskDetailView(APIView):
         except Task.DoesNotExist:
             return Response({'error': 'not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        membership = _get_membership(request.user, str(task.project_id))
+        if not membership:
+            return Response({'error': 'forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        if not _can_edit_tasks(membership.role):
+            return Response({'error': 'viewers cannot update tasks'}, status=status.HTTP_403_FORBIDDEN)
+
         if 'title' in request.data:
             task.title = request.data['title'].strip()
         if 'description' in request.data:
