@@ -138,3 +138,26 @@ class TestTasks:
         assert response.data['task']['title'] == 'Updated Title'
         assert response.data['task']['status'] == 'done'
 
+    def test_search_tasks_with_quotes_does_not_error(self, auth_client, user):
+        project = Project.objects.create(name='P', owner=user)
+        Membership.objects.create(user=user, project=project, role='admin')
+        Task.objects.create(project=project, title="Meera's Launch Task", created_by=user)
+
+        response = auth_client.get(f'/api/projects/{project.id}/tasks?q=\'')
+        assert response.status_code == 200
+        assert isinstance(response.data.get('tasks'), list)
+
+    def test_search_tasks_returns_serialized_task_with_assignee(self, auth_client, user):
+        project = Project.objects.create(name='P', owner=user)
+        Membership.objects.create(user=user, project=project, role='admin')
+        Task.objects.create(project=project, title="Launch website", assignee=user, created_by=user)
+
+        response = auth_client.get(f'/api/projects/{project.id}/tasks?q=Launch')
+        assert response.status_code == 200
+        assert len(response.data['tasks']) == 1
+        task = response.data['tasks'][0]
+        assert 'assignee' in task
+        assert task['assignee'] is not None
+        assert task['assignee']['email'] == user.email
+
+
